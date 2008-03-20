@@ -365,9 +365,12 @@ public class SoundTranscoder extends AbstractTranscoder
 		return count;
 	}
 
-    public static final class CouldNotDetermineSampleFrameCount extends TranscoderException {}
+    public static final class CouldNotDetermineSampleFrameCount extends TranscoderException {
+
+        private static final long serialVersionUID = 6530096120116320212L;}
     public static final class UnsupportedSamplingRate extends TranscoderException
     {
+        private static final long serialVersionUID = -7440513635414375590L;
         public UnsupportedSamplingRate( int frequency )
         {
             this.frequency = frequency;
@@ -375,5 +378,7 @@ public class SoundTranscoder extends AbstractTranscoder
         public int frequency;
     }
 
-	public static final class NotInMP3Format extends TranscoderException {}
+	public static final class NotInMP3Format extends TranscoderException {
+
+        private static final long serialVersionUID = -2480509003403956321L;}
 }
