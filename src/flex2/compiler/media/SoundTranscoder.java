@@ -93,7 +93,7 @@ public class SoundTranscoder extends AbstractTranscoder
     }
 
 	public TranscodingResults doTranscode( PathResolver context, SymbolTable symbolTable,
-                                           Map args, String className, boolean generateSource )
+                                           Map<String, Object> args, String className, boolean generateSource )
         throws TranscoderException
 	{
         TranscodingResults results = new TranscodingResults( resolveSource( context, args ));
