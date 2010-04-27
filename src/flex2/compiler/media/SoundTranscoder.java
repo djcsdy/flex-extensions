@@ -26,7 +26,7 @@ import java.io.InputStream;
 import java.util.Map;
 
 /**
- * Transcodes sounds into DefineSounds for embedding
+ * Transcodes sounds into DefineSounds for embedding.
  *
  * @author Clement Wong
  */
