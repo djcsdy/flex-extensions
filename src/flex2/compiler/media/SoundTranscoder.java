@@ -124,39 +124,12 @@ public class SoundTranscoder extends AbstractTranscoder
             baos.write(0);
             baos.write(0);
 
-            // look for the first 11-bit frame sync. skip everything before the frame sync
-            int b, state = 0;
-
-            // 3-state FSM
-            while ((b = in1.read()) != -1)
+            if (skipToNextFrame(in1))
             {
-                if (state == 0)
-                {
-                    if (b == 255)
-                    {
-                        state = 1;
-                    }
-                }
-                else if (state == 1)
-                {
-                    if ((b >> 5 & 0x7) == 7)
-                    {
-                        baos.write(255);
-                        baos.write(b);
-                        state = 2;
-                    }
-                    else
-                    {
-                        state = 0;
-                    }
-                }
-                else if (state == 2)
+                int b;
+                while ((b = in1.read()) != -1)
                 {
                     baos.write(b);
-                }
-                else
-                {
-                    // assert false;
                 }
             }
 
@@ -261,6 +234,41 @@ public class SoundTranscoder extends AbstractTranscoder
 
 		return ds;
 	}
+
+    private boolean skipToNextFrame (BufferedInputStream in) throws IOException {
+        // look for the first 11-bit frame sync. skip everything before the frame sync
+        int b, state = 0;
+
+        in.mark(3);
+        while ((b = in.read()) != -1)
+        {
+            if (state == 0)
+            {
+                if (b == 255)
+                {
+                    state = 1;
+                }
+                else
+                {
+                    in.mark(3);
+                }
+            }
+            else if (state == 1)
+            {
+                if ((b >> 5 & 0x7) == 7)
+                {
+                    in.reset();
+                    return true;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
+        }
+
+        return false;
+    }
 
     private int countFrames(byte[] data)
 	{
