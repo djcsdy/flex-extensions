@@ -117,7 +117,50 @@ public class SoundTranscoder extends AbstractTranscoder
 			int size = (int) source.size();
 			in = source.getInputStream();
 
-			sound = readFully(in, size);
+            BufferedInputStream in1 = new BufferedInputStream(in);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(size + 2);
+
+            // write 2 bytes - number of frames to skip...
+            baos.write(0);
+            baos.write(0);
+
+            // look for the first 11-bit frame sync. skip everything before the frame sync
+            int b, state = 0;
+
+            // 3-state FSM
+            while ((b = in1.read()) != -1)
+            {
+                if (state == 0)
+                {
+                    if (b == 255)
+                    {
+                        state = 1;
+                    }
+                }
+                else if (state == 1)
+                {
+                    if ((b >> 5 & 0x7) == 7)
+                    {
+                        baos.write(255);
+                        baos.write(b);
+                        state = 2;
+                    }
+                    else
+                    {
+                        state = 0;
+                    }
+                }
+                else if (state == 2)
+                {
+                    baos.write(b);
+                }
+                else
+                {
+                    // assert false;
+                }
+            }
+
+            sound = baos.toByteArray();
 		}
 		catch (IOException ex)
 		{
@@ -219,55 +262,7 @@ public class SoundTranscoder extends AbstractTranscoder
 		return ds;
 	}
 
-	private byte[] readFully(InputStream inputStream, int size) throws IOException
-	{
-		BufferedInputStream in = new BufferedInputStream(inputStream);
-		ByteArrayOutputStream baos = new ByteArrayOutputStream(size + 2);
-
-		// write 2 bytes - number of frames to skip...
-		baos.write(0);
-		baos.write(0);
-
-		// look for the first 11-bit frame sync. skip everything before the frame sync
-		int b, state = 0;
-
-		// 3-state FSM
-		while ((b = in.read()) != -1)
-		{
-			if (state == 0)
-			{
-				if (b == 255)
-				{
-					state = 1;
-				}
-			}
-			else if (state == 1)
-			{
-				if ((b >> 5 & 0x7) == 7)
-				{
-					baos.write(255);
-					baos.write(b);
-					state = 2;
-				}
-				else
-				{
-					state = 0;
-				}
-			}
-			else if (state == 2)
-			{
-				baos.write(b);
-			}
-			else
-			{
-				// assert false;
-			}
-		}
-
-		return baos.toByteArray();
-	}
-
-	private int countFrames(byte[] data)
+    private int countFrames(byte[] data)
 	{
 		int count = 0, start = 2, b1, b2, b3;//, b4;
         boolean skipped = false;
