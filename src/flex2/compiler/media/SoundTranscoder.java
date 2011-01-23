@@ -39,8 +39,10 @@ public class SoundTranscoder extends AbstractTranscoder
 	private static final int[][] mp3bitrates;
 	private static final int[][] mp3bitrateIndices;
 
+    private static final int INFO_TAG_ZEROES = 32;
 
-	static
+
+    static
 	{
 		// [frequency_index][version_index]
 		mp3frequencies = new int[][]
@@ -126,11 +128,8 @@ public class SoundTranscoder extends AbstractTranscoder
 
             if (skipToNextFrame(in1))
             {
-                int b;
-                while ((b = in1.read()) != -1)
-                {
-                    baos.write(b);
-                }
+                processInfoTag(in1);
+                processRemainingFrames(in1, baos);
             }
 
             sound = baos.toByteArray();
@@ -234,6 +233,84 @@ public class SoundTranscoder extends AbstractTranscoder
 
 		return ds;
 	}
+
+    private void processInfoTag (BufferedInputStream in) throws IOException {
+        in.mark(INFO_TAG_ZEROES + 4);
+        in.skip(4);
+
+        byte[][] signatures = new byte[][]{
+                "Xing".getBytes("US-ASCII"),
+                "Info".getBytes("US-ASCII")};
+
+        int pos = 0;
+        byte[] signature = null;
+        int b;
+
+        while (pos < 4 && (b = in.read()) != -1)
+        {
+            if (pos == 0) {
+                for (byte[] s: signatures)
+                {
+                    if (s[0] == b)
+                    {
+                        signature = s;
+                        break;
+                    }
+                }
+
+                if (signature == null) {
+                    in.reset();
+                    return;
+                }
+            }
+            else
+            {
+                if (signature[pos] != b)
+                {
+                    in.reset();
+                    return;
+                }
+            }
+            ++pos;
+        }
+
+        in.skip(0xb1 - INFO_TAG_ZEROES - 4 - 4);
+
+        int delay, padding;
+        if ((b = in.read()) == -1)
+        {
+            return;
+        }
+        else
+        {
+            delay = b << 4;
+        }
+        if ((b = in.read()) == -1)
+        {
+            return;
+        }
+        else
+        {
+            delay |= (b >> 4) & 15;
+            padding = b << 8;
+        }
+        if ((b = in.read()) == -1)
+        {
+            return;
+        }
+        else
+        {
+            padding |= b;
+        }
+    }
+
+    private void processRemainingFrames (BufferedInputStream in, ByteArrayOutputStream baos) throws IOException {
+        int b;
+        while ((b = in.read()) != -1)
+        {
+            baos.write(b);
+        }
+    }
 
     private boolean skipToNextFrame (BufferedInputStream in) throws IOException {
         // look for the first 11-bit frame sync. skip everything before the frame sync
