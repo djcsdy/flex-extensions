@@ -39,7 +39,7 @@ public class SoundTranscoder extends AbstractTranscoder
 	private static final int[][] mp3bitrates;
 	private static final int[][] mp3bitrateIndices;
 
-    private static final int INFO_TAG_ZEROES = 32;
+    private static final int DECODER_DELAY = 529;
 
 
     static
@@ -113,26 +113,34 @@ public class SoundTranscoder extends AbstractTranscoder
 	{
 		InputStream in = null;
 		byte[] sound = null;
+        TranscodeJob job = new TranscodeJob();
 
 		try
 		{
 			int size = (int) source.size();
 			in = source.getInputStream();
 
-            BufferedInputStream in1 = new BufferedInputStream(in);
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(size + 2);
+            job.in = new BufferedInputStream(in);
+            job.soundData = new ByteArrayOutputStream(size + 2);
 
-            // write 2 bytes - number of frames to skip...
-            baos.write(0);
-            baos.write(0);
-
-            if (skipToNextFrame(in1))
+            if (skipToNextFrame(job))
             {
-                processInfoTag(in1);
-                processRemainingFrames(in1, baos);
+                processInfoTag(job);
+
+                // write number of samples to skip.
+                final int totalDelay = job.encoderDelay + DECODER_DELAY;
+                job.soundData.write(totalDelay & 255);
+                job.soundData.write((totalDelay >> 8) & 255);
+
+                skipToNextFrame(job);
+                processRemainingFrames(job);
+            }
+            else
+            {
+                throw new NotInMP3Format();
             }
 
-            sound = baos.toByteArray();
+            sound = job.soundData.toByteArray();
 		}
 		catch (IOException ex)
 		{
@@ -223,7 +231,7 @@ public class SoundTranscoder extends AbstractTranscoder
 		 *
 		 * sample count = number of MP3 frames * number of samples per MP3
 		 */
-		ds.sampleCount = countFrames(ds.data) * (layer == 3 ? 384 : 1152);
+		ds.sampleCount = countFrames(ds.data) * (layer == 3 ? 384 : 1152) - job.padding - job.encoderDelay;
 
 		if (ds.sampleCount < 0)
 		{
@@ -234,9 +242,17 @@ public class SoundTranscoder extends AbstractTranscoder
 		return ds;
 	}
 
-    private void processInfoTag (BufferedInputStream in) throws IOException {
-        in.mark(INFO_TAG_ZEROES + 4);
-        in.skip(4);
+    private class TranscodeJob
+    {
+        public BufferedInputStream in = null;
+        public int encoderDelay = 0;
+        public int padding = 0;
+        public ByteArrayOutputStream soundData = null;
+    }
+
+    private void processInfoTag (TranscodeJob job) throws IOException, NotInMP3Format {
+        job.in.mark(40);
+        job.in.skip(4);
 
         byte[][] signatures = new byte[][]{
                 "Xing".getBytes("US-ASCII"),
@@ -246,7 +262,14 @@ public class SoundTranscoder extends AbstractTranscoder
         byte[] signature = null;
         int b;
 
-        while (pos < 4 && (b = in.read()) != -1)
+        while ((b = job.in.read()) == 0)
+        {
+            ++pos;
+        }
+
+        pos = 0;
+
+        do
         {
             if (pos == 0) {
                 for (byte[] s: signatures)
@@ -259,7 +282,7 @@ public class SoundTranscoder extends AbstractTranscoder
                 }
 
                 if (signature == null) {
-                    in.reset();
+                    job.in.reset();
                     return;
                 }
             }
@@ -267,57 +290,56 @@ public class SoundTranscoder extends AbstractTranscoder
             {
                 if (signature[pos] != b)
                 {
-                    in.reset();
+                    job.in.reset();
                     return;
                 }
             }
             ++pos;
-        }
+        } while (pos < 4 && (b = job.in.read()) != -1);
 
-        in.skip(0xb1 - INFO_TAG_ZEROES - 4 - 4);
+        job.in.skip(137);
 
-        int delay, padding;
-        if ((b = in.read()) == -1)
+        if ((b = job.in.read()) == -1)
         {
-            return;
+            throw new NotInMP3Format();
         }
         else
         {
-            delay = b << 4;
+            job.encoderDelay = b << 4;
         }
-        if ((b = in.read()) == -1)
+        if ((b = job.in.read()) == -1)
         {
-            return;
-        }
-        else
-        {
-            delay |= (b >> 4) & 15;
-            padding = b << 8;
-        }
-        if ((b = in.read()) == -1)
-        {
-            return;
+            throw new NotInMP3Format();
         }
         else
         {
-            padding |= b;
+            job.encoderDelay |= (b >> 4) & 15;
+            job.padding = b << 8;
+        }
+        if ((b = job.in.read()) == -1)
+        {
+            throw new NotInMP3Format();
+        }
+        else
+        {
+            job.padding |= b;
         }
     }
 
-    private void processRemainingFrames (BufferedInputStream in, ByteArrayOutputStream baos) throws IOException {
+    private void processRemainingFrames (TranscodeJob job) throws IOException {
         int b;
-        while ((b = in.read()) != -1)
+        while ((b = job.in.read()) != -1)
         {
-            baos.write(b);
+            job.soundData.write(b);
         }
     }
 
-    private boolean skipToNextFrame (BufferedInputStream in) throws IOException {
+    private boolean skipToNextFrame (TranscodeJob job) throws IOException {
         // look for the first 11-bit frame sync. skip everything before the frame sync
         int b, state = 0;
 
-        in.mark(3);
-        while ((b = in.read()) != -1)
+        job.in.mark(3);
+        while ((b = job.in.read()) != -1)
         {
             if (state == 0)
             {
@@ -327,14 +349,14 @@ public class SoundTranscoder extends AbstractTranscoder
                 }
                 else
                 {
-                    in.mark(3);
+                    job.in.mark(3);
                 }
             }
             else if (state == 1)
             {
                 if ((b >> 5 & 0x7) == 7)
                 {
-                    in.reset();
+                    job.in.reset();
                     return true;
                 }
                 else
