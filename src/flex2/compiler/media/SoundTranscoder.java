@@ -123,17 +123,17 @@ public class SoundTranscoder extends AbstractTranscoder
             job.in = new BufferedInputStream(in);
             job.soundData = new ByteArrayOutputStream(size + 2);
 
-            if (skipToNextFrame(job))
+            if (job.skipToNextFrame())
             {
-                processInfoTag(job);
+                job.processInfoTag();
 
                 // write number of samples to skip.
                 final int totalDelay = job.encoderDelay + DECODER_DELAY;
                 job.soundData.write(totalDelay & 255);
                 job.soundData.write((totalDelay >> 8) & 255);
 
-                skipToNextFrame(job);
-                processRemainingFrames(job);
+                job.skipToNextFrame();
+                job.processRemainingFrames();
             }
             else
             {
@@ -248,125 +248,125 @@ public class SoundTranscoder extends AbstractTranscoder
         public int encoderDelay = 0;
         public int padding = 0;
         public ByteArrayOutputStream soundData = null;
-    }
 
-    private void processInfoTag (TranscodeJob job) throws IOException, NotInMP3Format {
-        job.in.mark(40);
-        job.in.skip(4);
+        private void processInfoTag () throws IOException, NotInMP3Format {
+            in.mark(40);
+            in.skip(4);
 
-        byte[][] signatures = new byte[][]{
-                "Xing".getBytes("US-ASCII"),
-                "Info".getBytes("US-ASCII")};
+            byte[][] signatures = new byte[][]{
+                    "Xing".getBytes("US-ASCII"),
+                    "Info".getBytes("US-ASCII")};
 
-        int pos = 0;
-        byte[] signature = null;
-        int b;
+            int pos = 0;
+            byte[] signature = null;
+            int b;
 
-        while ((b = job.in.read()) == 0)
-        {
-            ++pos;
-        }
+            while ((b = in.read()) == 0)
+            {
+                ++pos;
+            }
 
-        pos = 0;
+            pos = 0;
 
-        do
-        {
-            if (pos == 0) {
-                for (byte[] s: signatures)
-                {
-                    if (s[0] == b)
+            do
+            {
+                if (pos == 0) {
+                    for (byte[] s: signatures)
                     {
-                        signature = s;
-                        break;
+                        if (s[0] == b)
+                        {
+                            signature = s;
+                            break;
+                        }
+                    }
+
+                    if (signature == null) {
+                        in.reset();
+                        return;
                     }
                 }
-
-                if (signature == null) {
-                    job.in.reset();
-                    return;
+                else
+                {
+                    if (signature[pos] != b)
+                    {
+                        in.reset();
+                        return;
+                    }
                 }
+                ++pos;
+            } while (pos < 4 && (b = in.read()) != -1);
+
+            in.skip(137);
+
+            if ((b = in.read()) == -1)
+            {
+                throw new NotInMP3Format();
             }
             else
             {
-                if (signature[pos] != b)
-                {
-                    job.in.reset();
-                    return;
-                }
+                encoderDelay = b << 4;
             }
-            ++pos;
-        } while (pos < 4 && (b = job.in.read()) != -1);
-
-        job.in.skip(137);
-
-        if ((b = job.in.read()) == -1)
-        {
-            throw new NotInMP3Format();
-        }
-        else
-        {
-            job.encoderDelay = b << 4;
-        }
-        if ((b = job.in.read()) == -1)
-        {
-            throw new NotInMP3Format();
-        }
-        else
-        {
-            job.encoderDelay |= (b >> 4) & 15;
-            job.padding = b << 8;
-        }
-        if ((b = job.in.read()) == -1)
-        {
-            throw new NotInMP3Format();
-        }
-        else
-        {
-            job.padding |= b;
-        }
-    }
-
-    private void processRemainingFrames (TranscodeJob job) throws IOException {
-        int b;
-        while ((b = job.in.read()) != -1)
-        {
-            job.soundData.write(b);
-        }
-    }
-
-    private boolean skipToNextFrame (TranscodeJob job) throws IOException {
-        // look for the first 11-bit frame sync. skip everything before the frame sync
-        int b, state = 0;
-
-        job.in.mark(3);
-        while ((b = job.in.read()) != -1)
-        {
-            if (state == 0)
+            if ((b = in.read()) == -1)
             {
-                if (b == 255)
-                {
-                    state = 1;
-                }
-                else
-                {
-                    job.in.mark(3);
-                }
+                throw new NotInMP3Format();
             }
-            else if (state == 1)
+            else
             {
-                if ((b >> 5 & 0x7) == 7)
-                {
-                    job.in.reset();
-                    return true;
-                }
-                else
-                {
-                    state = 0;
-                }
+                encoderDelay |= (b >> 4) & 15;
+                padding = b << 8;
+            }
+            if ((b = in.read()) == -1)
+            {
+                throw new NotInMP3Format();
+            }
+            else
+            {
+                padding |= b;
             }
         }
 
-        return false;
+        private void processRemainingFrames () throws IOException {
+            int b;
+            while ((b = in.read()) != -1)
+            {
+                soundData.write(b);
+            }
+        }
+
+        private boolean skipToNextFrame () throws IOException {
+            // look for the first 11-bit frame sync. skip everything before the frame sync
+            int b, state = 0;
+
+            in.mark(3);
+            while ((b = in.read()) != -1)
+            {
+                if (state == 0)
+                {
+                    if (b == 255)
+                    {
+                        state = 1;
+                    }
+                    else
+                    {
+                        in.mark(3);
+                    }
+                }
+                else if (state == 1)
+                {
+                    if ((b >> 5 & 0x7) == 7)
+                    {
+                        in.reset();
+                        return true;
+                    }
+                    else
+                    {
+                        state = 0;
+                    }
+                }
+            }
+
+            return false;
+        }
     }
 
     private int countFrames(byte[] data)
