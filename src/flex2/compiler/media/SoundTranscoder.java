@@ -111,56 +111,12 @@ public class SoundTranscoder extends AbstractTranscoder
 	private DefineSound mp3(VirtualFile source, String symbolName)
             throws TranscoderException
 	{
-		InputStream in = null;
-		byte[] sound = null;
+        byte[] sound = null;
         TranscodeJob job = new TranscodeJob();
 
-		try
-		{
-			int size = (int) source.size();
-			in = source.getInputStream();
+        sound = job.transcode(source);
 
-            job.in = new BufferedInputStream(in);
-            job.soundData = new ByteArrayOutputStream(size + 2);
-
-            if (job.skipToNextFrame())
-            {
-                job.processInfoTag();
-
-                // write number of samples to skip.
-                final int totalDelay = job.encoderDelay + DECODER_DELAY;
-                job.soundData.write(totalDelay & 255);
-                job.soundData.write((totalDelay >> 8) & 255);
-
-                job.skipToNextFrame();
-                job.processRemainingFrames();
-            }
-            else
-            {
-                throw new NotInMP3Format();
-            }
-
-            sound = job.soundData.toByteArray();
-		}
-		catch (IOException ex)
-		{
-            throw new AbstractTranscoder.ExceptionWhileTranscoding( ex );
-		}
-		finally
-		{
-			if (in != null)
-			{
-				try
-				{
-					in.close();
-				}
-				catch (IOException ex)
-				{
-				}
-			}
-		}
-
-		if (sound == null || sound.length < 5)
+        if (sound == null || sound.length < 5)
 		{
 			throw new NotInMP3Format();
 		}
@@ -366,6 +322,44 @@ public class SoundTranscoder extends AbstractTranscoder
             }
 
             return false;
+        }
+
+        private byte[] transcode (VirtualFile source) throws NotInMP3Format, ExceptionWhileTranscoding {
+            InputStream in = null;
+            byte[] sound;
+            try {
+                int size = (int) source.size();
+                in = source.getInputStream();
+
+                this.in = new BufferedInputStream(in);
+                soundData = new ByteArrayOutputStream(size + 2);
+
+                if (skipToNextFrame()) {
+                    processInfoTag();
+
+                    // write number of samples to skip.
+                    final int totalDelay = encoderDelay + DECODER_DELAY;
+                    soundData.write(totalDelay & 255);
+                    soundData.write((totalDelay >> 8) & 255);
+
+                    skipToNextFrame();
+                    processRemainingFrames();
+                } else {
+                    throw new NotInMP3Format();
+                }
+
+                sound = soundData.toByteArray();
+            } catch (IOException ex) {
+                throw new ExceptionWhileTranscoding(ex);
+            } finally {
+                if (in != null) {
+                    try {
+                        in.close();
+                    } catch (IOException ex) {
+                    }
+                }
+            }
+            return sound;
         }
     }
 
