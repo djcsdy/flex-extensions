@@ -101,109 +101,119 @@ public class SoundTranscoder extends AbstractTranscoder
         TranscodingResults results = new TranscodingResults( resolveSource( context, args ));
         String newName = (String) args.get( Transcoder.NEWNAME );
 
-		results.defineTag = mp3(results.assetSource, newName);
+        TranscodeJob job = new TranscodeJob();
+        results.defineTag = job.transcode(results.assetSource, newName, this);
+
         if (generateSource)
             generateSource( results, className, args );
         
         return results;
 	}
 
-	private DefineSound mp3(VirtualFile source, String symbolName)
-            throws TranscoderException
-	{
-        byte[] sound = null;
-        TranscodeJob job = new TranscodeJob();
-
-        sound = job.transcode(source);
-
-        if (sound == null || sound.length < 5)
-		{
-			throw new NotInMP3Format();
-		}
-
-		DefineSound ds = new DefineSound();
-		ds.format = 2; // MP3
-
-		ds.data = sound;
-		ds.size = 1; // always 16-bit for compressed formats
-		ds.name = symbolName;
-
-		/**
-		 * 0 - version 2.5
-		 * 1 - reserved
-		 * 2 - version 2
-		 * 3 - version 1
-		 */
-		int version = ds.data[3] >> 3 & 0x3;
-
-		/**
-		 * 0 - reserved
-		 * 1 - layer III => 1152 samples
-		 * 2 - layer II  => 1152 samples
-		 * 3 - layer I   => 384  samples
-		 */
-		int layer = ds.data[3] >> 1 & 0x3;
-
-		int samplingRate = ds.data[4] >> 2 & 0x3;
-
-		/**
-		 * 0 - stereo
-		 * 1 - joint stereo
-		 * 2 - dual channel
-		 * 3 - single channel
-		 */
-		int channelMode = ds.data[5] >> 6 & 0x3;
-
-		int frequency = mp3frequencies[samplingRate][version];
-
-		/**
-		 * 1 - 11kHz
-		 * 2 - 22kHz
-		 * 3 - 44kHz
-		 */
-		switch (frequency)
-		{
-		case 11025:
-			ds.rate = 1;
-			break;
-		case 22050:
-			ds.rate = 2;
-			break;
-		case 44100:
-			ds.rate = 3;
-			break;
-		default:
-            throw new UnsupportedSamplingRate( frequency );
-		}
-
-		/**
-		 * 0 - mono
-		 * 1 - stereo
-		 */
-		ds.type = channelMode == 3 ? 0 : 1;
-
-		/**
-		 * assume that the whole thing plays in one SWF frame
-		 *
-		 * sample count = number of MP3 frames * number of samples per MP3
-		 */
-		ds.sampleCount = countFrames(ds.data) * (layer == 3 ? 384 : 1152) - job.padding - job.encoderDelay;
-
-		if (ds.sampleCount < 0)
-		{
-			// frame count == -1, error!
-			throw new CouldNotDetermineSampleFrameCount();
-		}
-
-		return ds;
-	}
-
     private class TranscodeJob
     {
-        public BufferedInputStream in = null;
-        public int encoderDelay = 0;
-        public int padding = 0;
-        public ByteArrayOutputStream soundData = null;
+        private BufferedInputStream in = null;
+        private int encoderDelay = 0;
+        private int padding = 0;
+        private ByteArrayOutputStream soundData = null;
+
+        private int countFrames (byte[] data)
+        {
+            int count = 0, start = 2, b1, b2, b3;//, b4;
+            boolean skipped = false;
+
+            while (start + 2 < data.length)
+            {
+                b1 = data[start] & 0xff;
+                b2 = data[start + 1] & 0xff;
+                b3 = data[start + 2] & 0xff;
+
+                // check frame sync
+                if (b1 != 255 || (b2 >> 5 & 0x7) != 7)
+                {
+                    if (!skipped && start > 0)  // LAME has a bug where they do padding wrong sometimes
+                    {
+                        b3 = b2;
+                        b2 = b1;
+                        b1 = data[start-1] & 0xff;
+                        if (b1 != 255 || (b2 >> 5 & 0x7) != 7)
+                        {
+                            ++start;
+                            continue;
+                        }
+                        else
+                        {
+                            --start;
+                        }
+                    }
+                    else
+                    {
+                        ++start;
+                        continue;
+                    }
+                }
+
+                /**
+                 * 0 - version 2.5
+                 * 1 - reserved
+                 * 2 - version 2
+                 * 3 - version 1
+                 */
+                int version = b2 >> 3 & 0x3;
+
+                /**
+                 * 0 - reserved
+                 * 1 - layer III => 1152 samples
+                 * 2 - layer II  => 1152 samples
+                 * 3 - layer I   => 384  samples
+                 */
+                int layer = b2 >> 1 & 0x3;
+
+                int bits = b3 >> 4 & 0xf;
+                int bitrateIndex = mp3bitrateIndices[version][layer];
+                int bitrate = bitrateIndex != -1 ? mp3bitrates[bits][bitrateIndex] * 1000 : -1;
+
+                if (bitrate == -1)
+                {
+                    skipped = true;
+                    ++start;
+                    continue;
+                }
+
+                int samplingRate = b3 >> 2 & 0x3;
+
+                int frequency = mp3frequencies[samplingRate][version];
+
+                if (frequency == 0)
+                {
+                    skipped = true;
+                    ++start;
+                    continue;
+    //                return -1;
+                }
+
+                int padding = b3 >> 1 & 0x1;
+
+                int frameLength = layer == 3 ?
+                        (12 * bitrate / frequency + padding) * 4 :
+                        144 * bitrate / frequency + padding;
+
+                if (frameLength == 0)
+                {
+                    // just in case. if we don't check frameLength, we may end up running an infinite loop!
+                    break;
+                }
+                else
+                {
+                    start += frameLength;
+                }
+
+                skipped = false;
+                count += 1;
+            }
+
+            return count;
+        }
 
         private void processInfoTag () throws IOException, NotInMP3Format {
             in.mark(40);
@@ -324,14 +334,15 @@ public class SoundTranscoder extends AbstractTranscoder
             return false;
         }
 
-        private byte[] transcode (VirtualFile source) throws NotInMP3Format, ExceptionWhileTranscoding {
-            InputStream in = null;
-            byte[] sound;
+        private DefineSound transcode (VirtualFile source, String symbolName, SoundTranscoder soundTranscoder) throws NotInMP3Format, ExceptionWhileTranscoding, UnsupportedSamplingRate, CouldNotDetermineSampleFrameCount {
+            byte[] sound = null;
+            InputStream in1 = null;
+            byte[] sound1;
             try {
                 int size = (int) source.size();
-                in = source.getInputStream();
+                in1 = source.getInputStream();
 
-                this.in = new BufferedInputStream(in);
+                this.in = new BufferedInputStream(in1);
                 soundData = new ByteArrayOutputStream(size + 2);
 
                 if (skipToNextFrame()) {
@@ -348,118 +359,101 @@ public class SoundTranscoder extends AbstractTranscoder
                     throw new NotInMP3Format();
                 }
 
-                sound = soundData.toByteArray();
+                sound1 = soundData.toByteArray();
             } catch (IOException ex) {
                 throw new ExceptionWhileTranscoding(ex);
             } finally {
-                if (in != null) {
+                if (in1 != null) {
                     try {
-                        in.close();
+                        in1.close();
                     } catch (IOException ex) {
                     }
                 }
             }
-            return sound;
-        }
-    }
+            sound = sound1;
 
-    private int countFrames(byte[] data)
-	{
-		int count = 0, start = 2, b1, b2, b3;//, b4;
-        boolean skipped = false;
-
-        while (start + 2 < data.length)
-		{
-			b1 = data[start] & 0xff;
-			b2 = data[start + 1] & 0xff;
-			b3 = data[start + 2] & 0xff;
-
-			// check frame sync
-			if (b1 != 255 || (b2 >> 5 & 0x7) != 7)
-			{
-                if (!skipped && start > 0)  // LAME has a bug where they do padding wrong sometimes
-                {
-                    b3 = b2;
-                    b2 = b1;
-                    b1 = data[start-1] & 0xff;
-                    if (b1 != 255 || (b2 >> 5 & 0x7) != 7)
-                    {
-                        ++start;
-                        continue;
-                    }
-                    else
-                    {
-                        --start;
-                    }
-                }
-                else
-                {
-                    ++start;
-                    continue;
-                }
+            if (sound == null || sound.length < 5)
+            {
+                throw new NotInMP3Format();
             }
 
-			/**
-			 * 0 - version 2.5
-			 * 1 - reserved
-			 * 2 - version 2
-			 * 3 - version 1
-			 */
-			int version = b2 >> 3 & 0x3;
+            DefineSound ds = new DefineSound();
+            ds.format = 2; // MP3
 
-			/**
-			 * 0 - reserved
-			 * 1 - layer III => 1152 samples
-			 * 2 - layer II  => 1152 samples
-			 * 3 - layer I   => 384  samples
-			 */
-			int layer = b2 >> 1 & 0x3;
+            ds.data = sound;
+            ds.size = 1; // always 16-bit for compressed formats
+            ds.name = symbolName;
 
-			int bits = b3 >> 4 & 0xf;
-			int bitrateIndex = mp3bitrateIndices[version][layer];
-			int bitrate = bitrateIndex != -1 ? mp3bitrates[bits][bitrateIndex] * 1000 : -1;
+            /**
+             * 0 - version 2.5
+             * 1 - reserved
+             * 2 - version 2
+             * 3 - version 1
+             */
+            int version = ds.data[3] >> 3 & 0x3;
 
-			if (bitrate == -1)
-			{
-                skipped = true;
-                ++start;
-                continue;
-			}
+            /**
+             * 0 - reserved
+             * 1 - layer III => 1152 samples
+             * 2 - layer II  => 1152 samples
+             * 3 - layer I   => 384  samples
+             */
+            int layer = ds.data[3] >> 1 & 0x3;
 
-			int samplingRate = b3 >> 2 & 0x3;
+            int samplingRate = ds.data[4] >> 2 & 0x3;
 
-			int frequency = mp3frequencies[samplingRate][version];
+            /**
+             * 0 - stereo
+             * 1 - joint stereo
+             * 2 - dual channel
+             * 3 - single channel
+             */
+            int channelMode = ds.data[5] >> 6 & 0x3;
 
-			if (frequency == 0)
-			{
-                skipped = true;
-                ++start;
-                continue;
-//                return -1;
-			}
+            int frequency = mp3frequencies[samplingRate][version];
 
-			int padding = b3 >> 1 & 0x1;
+            /**
+             * 1 - 11kHz
+             * 2 - 22kHz
+             * 3 - 44kHz
+             */
+            switch (frequency)
+            {
+            case 11025:
+                ds.rate = 1;
+                break;
+            case 22050:
+                ds.rate = 2;
+                break;
+            case 44100:
+                ds.rate = 3;
+                break;
+            default:
+                throw new UnsupportedSamplingRate( frequency );
+            }
 
-            int frameLength = layer == 3 ?
-					(12 * bitrate / frequency + padding) * 4 :
-					144 * bitrate / frequency + padding;
+            /**
+             * 0 - mono
+             * 1 - stereo
+             */
+            ds.type = channelMode == 3 ? 0 : 1;
 
-			if (frameLength == 0)
-			{
-				// just in case. if we don't check frameLength, we may end up running an infinite loop!
-				break;
-			}
-			else
-			{
-				start += frameLength;
-			}
+            /**
+             * assume that the whole thing plays in one SWF frame
+             *
+             * sample count = number of MP3 frames * number of samples per MP3
+             */
+            ds.sampleCount = countFrames(ds.data) * (layer == 3 ? 384 : 1152) - padding - encoderDelay;
 
-            skipped = false;
-            count += 1;
-		}
+            if (ds.sampleCount < 0)
+            {
+                // frame count == -1, error!
+                throw new CouldNotDetermineSampleFrameCount();
+            }
 
-		return count;
-	}
+            return ds;
+        }
+    }
 
     public static final class CouldNotDetermineSampleFrameCount extends TranscoderException {
 
