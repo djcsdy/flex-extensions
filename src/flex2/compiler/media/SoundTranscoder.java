@@ -102,7 +102,7 @@ public class SoundTranscoder extends AbstractTranscoder
         String newName = (String) args.get( Transcoder.NEWNAME );
 
         TranscodeJob job = new TranscodeJob();
-        results.defineTag = job.transcode(results.assetSource, newName, this);
+        results.defineTag = job.transcode(results.assetSource, newName);
 
         if (generateSource)
             generateSource( results, className, args );
@@ -114,7 +114,7 @@ public class SoundTranscoder extends AbstractTranscoder
     {
         private BufferedInputStream in = null;
         private int encoderDelay = 0;
-        private int padding = 0;
+        private int fill = 0;
         private ByteArrayOutputStream soundData = null;
 
         private int countFrames (byte[] data)
@@ -279,7 +279,7 @@ public class SoundTranscoder extends AbstractTranscoder
             else
             {
                 encoderDelay |= (b >> 4) & 15;
-                padding = b << 8;
+                fill = b << 8;
             }
             if ((b = in.read()) == -1)
             {
@@ -287,7 +287,7 @@ public class SoundTranscoder extends AbstractTranscoder
             }
             else
             {
-                padding |= b;
+                fill |= b;
             }
         }
 
@@ -334,24 +334,22 @@ public class SoundTranscoder extends AbstractTranscoder
             return false;
         }
 
-        private DefineSound transcode (VirtualFile source, String symbolName, SoundTranscoder soundTranscoder) throws NotInMP3Format, ExceptionWhileTranscoding, UnsupportedSamplingRate, CouldNotDetermineSampleFrameCount {
-            byte[] sound = null;
-            InputStream in1 = null;
-            byte[] sound1;
+        private DefineSound transcode (VirtualFile source, String symbolName) throws NotInMP3Format, ExceptionWhileTranscoding, UnsupportedSamplingRate, CouldNotDetermineSampleFrameCount {
+            InputStream in = null;
+            byte[] sound;
             try {
                 int size = (int) source.size();
-                in1 = source.getInputStream();
+                in = source.getInputStream();
 
-                this.in = new BufferedInputStream(in1);
+                this.in = new BufferedInputStream(in);
                 soundData = new ByteArrayOutputStream(size + 2);
+
+                // placeholder for number of samples to skip.
+                soundData.write(0);
+                soundData.write(0);
 
                 if (skipToNextFrame()) {
                     processInfoTag();
-
-                    // write number of samples to skip.
-                    final int totalDelay = encoderDelay + DECODER_DELAY;
-                    soundData.write(totalDelay & 255);
-                    soundData.write((totalDelay >> 8) & 255);
 
                     skipToNextFrame();
                     processRemainingFrames();
@@ -359,23 +357,28 @@ public class SoundTranscoder extends AbstractTranscoder
                     throw new NotInMP3Format();
                 }
 
-                sound1 = soundData.toByteArray();
+                sound = soundData.toByteArray();
             } catch (IOException ex) {
                 throw new ExceptionWhileTranscoding(ex);
             } finally {
-                if (in1 != null) {
+                if (in != null) {
                     try {
-                        in1.close();
+                        in.close();
                     } catch (IOException ex) {
                     }
                 }
             }
-            sound = sound1;
 
             if (sound == null || sound.length < 5)
             {
                 throw new NotInMP3Format();
             }
+
+            // write number of samples to skip.
+            final int totalDelay = encoderDelay + DECODER_DELAY;
+            sound[0] = (byte)(totalDelay & 255);
+            sound[1] = (byte)((totalDelay >> 8) & 255);
+
 
             DefineSound ds = new DefineSound();
             ds.format = 2; // MP3
@@ -443,7 +446,7 @@ public class SoundTranscoder extends AbstractTranscoder
              *
              * sample count = number of MP3 frames * number of samples per MP3
              */
-            ds.sampleCount = countFrames(ds.data) * (layer == 3 ? 384 : 1152) - padding - encoderDelay;
+            ds.sampleCount = countFrames(ds.data) * (layer == 3 ? 384 : 1152) - fill - encoderDelay;
 
             if (ds.sampleCount < 0)
             {
