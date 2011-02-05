@@ -115,7 +115,33 @@ public class SoundTranscoder extends AbstractTranscoder
         private BufferedInputStream in = null;
         private int encoderDelay = 0;
         private int fill = 0;
-        private ByteArrayOutputStream soundData = null;
+        private ByteArrayOutputStream soundDataStream = null;
+
+        /**
+         * 0 - version 2.5
+         * 1 - reserved
+         * 2 - version 2
+         * 3 - version 1
+         */
+        private int version = -1;
+
+        /**
+         * 0 - reserved
+         * 1 - layer III => 1152 samples
+         * 2 - layer II  => 1152 samples
+         * 3 - layer I   => 384  samples
+         */
+        private int layer = -1;
+
+        private int samplingRate = -1;
+
+        /**
+         * 0 - stereo
+         * 1 - joint stereo
+         * 2 - dual channel
+         * 3 - single channel
+         */
+        private int channelMode = -1;
 
         private int countFrames (byte[] data)
         {
@@ -295,15 +321,15 @@ public class SoundTranscoder extends AbstractTranscoder
             int b;
             while ((b = in.read()) != -1)
             {
-                soundData.write(b);
+                soundDataStream.write(b);
             }
         }
 
-        private boolean skipToNextFrame () throws IOException {
+        private boolean readNextFrameHeader () throws IOException, NotInMP3Format {
             // look for the first 11-bit frame sync. skip everything before the frame sync
             int b, state = 0;
 
-            in.mark(3);
+            in.mark(4);
             while ((b = in.read()) != -1)
             {
                 if (state == 0)
@@ -321,14 +347,36 @@ public class SoundTranscoder extends AbstractTranscoder
                 {
                     if ((b >> 5 & 0x7) == 7)
                     {
-                        in.reset();
-                        return true;
+                        if (layer == -1) {
+                            layer = b >> 1 & 0x3;
+                            version = b >> 3 & 0x3;
+                        } else if (layer != (b >> 1 & 0x3) ||
+                                version != (b >> 3 & 0x3)) {
+                            throw new NotInMP3Format(); // TODO choose a better exception
+                        }
+                        state = 2;
                     }
                     else
                     {
                         state = 0;
                     }
-                }
+                } else if (state == 2) {
+                    if (samplingRate == -1) {
+                        samplingRate = b >> 2 & 0x3;
+                    } else if (samplingRate != (b >> 2 & 0x3)) {
+                        throw new NotInMP3Format(); // TODO choose a better exception
+                    }
+                    state = 3;
+                } else if (state == 3) {
+                    if (channelMode == -1) {
+                        channelMode = b >> 6 & 0x3;
+                    } else if (channelMode != (b >> 6 & 0x3)) {
+                        throw new NotInMP3Format(); // TODO choose a better exception
+                    }
+
+                    in.reset();
+                    return true;
+               }
             }
 
             return false;
@@ -336,28 +384,28 @@ public class SoundTranscoder extends AbstractTranscoder
 
         private DefineSound transcode (VirtualFile source, String symbolName) throws NotInMP3Format, ExceptionWhileTranscoding, UnsupportedSamplingRate, CouldNotDetermineSampleFrameCount {
             InputStream in = null;
-            byte[] sound;
+            byte[] soundData;
             try {
                 int size = (int) source.size();
                 in = source.getInputStream();
 
                 this.in = new BufferedInputStream(in);
-                soundData = new ByteArrayOutputStream(size + 2);
+                soundDataStream = new ByteArrayOutputStream(size + 2);
 
                 // placeholder for number of samples to skip.
-                soundData.write(0);
-                soundData.write(0);
+                soundDataStream.write(0);
+                soundDataStream.write(0);
 
-                if (skipToNextFrame()) {
+                if (readNextFrameHeader()) {
                     processInfoTag();
 
-                    skipToNextFrame();
+                    readNextFrameHeader();
                     processRemainingFrames();
                 } else {
                     throw new NotInMP3Format();
                 }
 
-                sound = soundData.toByteArray();
+                soundData = soundDataStream.toByteArray();
             } catch (IOException ex) {
                 throw new ExceptionWhileTranscoding(ex);
             } finally {
@@ -369,49 +417,23 @@ public class SoundTranscoder extends AbstractTranscoder
                 }
             }
 
-            if (sound == null || sound.length < 5)
+            if (soundData == null || soundData.length < 5)
             {
                 throw new NotInMP3Format();
             }
 
             // write number of samples to skip.
             final int totalDelay = encoderDelay + DECODER_DELAY;
-            sound[0] = (byte)(totalDelay & 255);
-            sound[1] = (byte)((totalDelay >> 8) & 255);
+            soundData[0] = (byte)(totalDelay & 255);
+            soundData[1] = (byte)((totalDelay >> 8) & 255);
 
 
             DefineSound ds = new DefineSound();
             ds.format = 2; // MP3
 
-            ds.data = sound;
+            ds.data = soundData;
             ds.size = 1; // always 16-bit for compressed formats
             ds.name = symbolName;
-
-            /**
-             * 0 - version 2.5
-             * 1 - reserved
-             * 2 - version 2
-             * 3 - version 1
-             */
-            int version = ds.data[3] >> 3 & 0x3;
-
-            /**
-             * 0 - reserved
-             * 1 - layer III => 1152 samples
-             * 2 - layer II  => 1152 samples
-             * 3 - layer I   => 384  samples
-             */
-            int layer = ds.data[3] >> 1 & 0x3;
-
-            int samplingRate = ds.data[4] >> 2 & 0x3;
-
-            /**
-             * 0 - stereo
-             * 1 - joint stereo
-             * 2 - dual channel
-             * 3 - single channel
-             */
-            int channelMode = ds.data[5] >> 6 & 0x3;
 
             int frequency = mp3frequencies[samplingRate][version];
 
