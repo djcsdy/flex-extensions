@@ -5,7 +5,9 @@ import java.io.IOException;
 
 public class MP3Frame {
 
-    private static final int MPEG_LAYER_1 = 3;
+    public static final int MODE_MONO = 3;
+
+    public static final int MPEG_LAYER_1 = 3;
 
     private static final int[][] FREQUENCIES;
 	private static final int[][] BITRATES;
@@ -26,20 +28,20 @@ public class MP3Frame {
 		BITRATES = new int[][]
 		{
 			{0, 0, 0, 0, 0},
-			{32, 32, 32, 32, 8},
-			{64, 48, 40, 48, 16},
-			{96, 56, 48, 56, 24},
-			{128, 64, 56, 64, 32},
-			{160, 80, 64, 80, 40},
-			{192, 96, 80, 96, 48},
-			{224, 112, 96, 112, 56},
-			{256, 128, 112, 128, 64},
-			{288, 160, 128, 144, 80},
-			{320, 192, 160, 160, 96},
-			{352, 224, 192, 176, 112},
-			{384, 256, 224, 192, 128},
-			{416, 320, 256, 224, 144},
-			{448, 384, 320, 256, 160},
+			{32000, 32000, 32000, 32000, 8000},
+			{64000, 48000, 40000, 48000, 16000},
+			{96000, 56000, 48000, 56000, 24000},
+			{128000, 64000, 56000, 64000, 32000},
+			{160000, 80000, 64000, 80000, 40000},
+			{192000, 96000, 80000, 96000, 48000},
+			{224000, 112000, 96000, 112000, 56000},
+			{256000, 128000, 112000, 128000, 64000},
+			{288000, 160000, 128000, 144000, 80000},
+			{320000, 192000, 160000, 160000, 96000},
+			{352000, 224000, 192000, 176000, 112000},
+			{384000, 256000, 224000, 192000, 128000},
+			{416000, 320000, 256000, 224000, 144000},
+			{448000, 384000, 320000, 256000, 160000},
 			{-1, -1, -1, -1, -1}
 		};
 
@@ -61,25 +63,38 @@ public class MP3Frame {
     private byte[] frameData;
 
     static MP3Frame readNextFrame (BufferedInputStream in) throws IOException {
-        int pos = 0, b1, b2, b3;
+        int pos = 0, b;
 
-        while ((b1 = in.read()) != -1) {
+        while ((b = in.read()) != -1) {
             if (pos == 0) {
-                if (b1 == 0xff) {
+                if (b == 0xff) {
                     pos = 1;
                 }
             } else {
-                if ((b1 >> 5 & 0x7) == 0x7) {
-                    pos = 2;
-                    break;
+                if ((b >> 5 & 0x7) == 0x7) {
+                    MP3Frame frame = doReadFrame(b, in);
+                    if (frame == null) {
+                        // The frame header turned out to be invalid.
+                        // Ignore that header and continue searching from the next byte after b.
+                        pos = 0;
+                    } else {
+                        return frame;
+                    }
+                } else {
+                    pos = 0;
                 }
             }
         }
 
-        if (pos < 2) {
-            return null;
-        }
+        return null;
+    }
 
+    private static MP3Frame doReadFrame (int b1, BufferedInputStream in) throws IOException {
+        // Mark the current position in the buffer so we can continue from here if the
+        // frame header is invalid.
+        in.mark(2);
+
+        int b2, b3, pos;
         if ((b2 = in.read()) == -1 || (b3 = in.read()) == -1) {
             return null;
         }
@@ -95,17 +110,27 @@ public class MP3Frame {
 
         int bitrateVersionIndex = BITRATE_VERSION_INDICES[frame.mpegVersion][frame.layer];
         if (bitrateVersionIndex == -1) {
+            in.reset();
             return null;
         }
         int bitrate = BITRATES[bitrateIndex][bitrateVersionIndex];
 
         int frequency = frame.getFrequency();
 
-        int byteLength = frame.layer == MPEG_LAYER_1 ?
-                (12 * bitrate / frequency + padding) * 4 :
-                144 * bitrate / frequency + padding;
+        if (bitrate <= 0 || frequency == 0) {
+            in.reset();
+            return null;
+        }
+
+        int byteLength;
+        if (frame.layer == MPEG_LAYER_1) {
+            byteLength = (12 * bitrate / frequency + padding) * 4;
+        } else {
+            byteLength = 144 * bitrate / frequency + padding;
+        }
 
         if (byteLength < 4) {
+            in.reset();
             return null;
         }
 
@@ -120,7 +145,7 @@ public class MP3Frame {
         while (pos < byteLength) {
             int bytesRead = in.read(frame.frameData, pos, byteLength-pos);
             if (bytesRead == -1) {
-                // lame < 3.80 truncates the last frame instead of properly padding it
+                // LAME < 3.80 truncates the last frame instead of properly padding it
                 // with ancillary data. Our frameData is already padded with zeroes,
                 // so we repair the problem by breaking here.
                 break;
@@ -131,19 +156,7 @@ public class MP3Frame {
         return frame;
     }
 
-    public int getMPEGVersion () {
-        return mpegVersion;
-    }
-
-    public int getLayer () {
-        return layer;
-    }
-
-    public int getFrequencyIndex () {
-        return frequencyIndex;
-    }
-
-    private int getFrequency () {
+    public int getFrequency () {
         return FREQUENCIES[frequencyIndex][mpegVersion];
     }
 
