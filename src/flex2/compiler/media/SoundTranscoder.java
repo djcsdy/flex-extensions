@@ -148,7 +148,12 @@ public class SoundTranscoder extends AbstractTranscoder
 
         private void processInfoTag () throws IOException, NotInMP3Format {
             in.mark(40);
-            in.skip(4);
+
+            for (int i=0; i<4; ++i) {
+                if (in.read() == -1) {
+                    throw new NotInMP3Format();
+                }
+            }
 
             byte[][] signatures = new byte[][]{
                     "Xing".getBytes("US-ASCII"),
@@ -193,7 +198,11 @@ public class SoundTranscoder extends AbstractTranscoder
                 ++pos;
             } while (pos < 4 && (b = in.read()) != -1);
 
-            in.skip(137);
+            for (int i=0; i<137; ++i) {
+                if (in.read() == -1) {
+                    throw new NotInMP3Format();
+                }
+            }
 
             if ((b = in.read()) == -1)
             {
@@ -225,13 +234,17 @@ public class SoundTranscoder extends AbstractTranscoder
         private void processRemainingFrames () throws IOException, NotInMP3Format {
             while (readNextFrameHeader()) {
                 int b, c=0;
-                while (c < frameLength && (b = in.read()) != -1) {
-                    soundDataStream.write(b);
+                while (c < frameLength) {
+                    b = in.read();
+                    if (b == -1) {
+                        // lame < 3.80 doesn't properly pad the final frame with ancillary data
+                        soundDataStream.write(0);
+                    } else {
+                        soundDataStream.write(b);
+                    }
                     ++c;
                 }
-                if (c == frameLength) {
-                    ++numFrames;
-                }
+                ++numFrames;
             }
         }
 
@@ -280,7 +293,7 @@ public class SoundTranscoder extends AbstractTranscoder
                     padding = b >> 1 & 0x1;
                     bits = b >> 4 & 0xf;
                     state = 3;
-                } else if (state == 3) {
+                } else {
                     if (channelMode == -1) {
                         channelMode = b >> 6 & 0x3;
                     } else if (channelMode != (b >> 6 & 0x3)) {
@@ -339,7 +352,7 @@ public class SoundTranscoder extends AbstractTranscoder
                 if (in != null) {
                     try {
                         in.close();
-                    } catch (IOException ex) {
+                    } catch (IOException ignored) {
                     }
                 }
             }
