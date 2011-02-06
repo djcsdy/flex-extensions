@@ -112,6 +112,7 @@ public class SoundTranscoder extends AbstractTranscoder
 
     private class TranscodeJob
     {
+        private static final String US_ASCII = "US-ASCII";
         private BufferedInputStream in = null;
         private int encoderDelay = 0;
         private int fill = 0;
@@ -147,7 +148,7 @@ public class SoundTranscoder extends AbstractTranscoder
         private int frameLength;
 
         private void processInfoTag () throws IOException, NotInMP3Format {
-            in.mark(40);
+            in.mark(frameLength);
 
             for (int i=0; i<4; ++i) {
                 if (in.read() == -1) {
@@ -156,8 +157,8 @@ public class SoundTranscoder extends AbstractTranscoder
             }
 
             byte[][] signatures = new byte[][]{
-                    "Xing".getBytes("US-ASCII"),
-                    "Info".getBytes("US-ASCII")};
+                    "Xing".getBytes(US_ASCII),
+                    "Info".getBytes(US_ASCII)};
 
             int pos = 0;
             byte[] signature = null;
