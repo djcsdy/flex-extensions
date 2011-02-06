@@ -143,103 +143,8 @@ public class SoundTranscoder extends AbstractTranscoder
          */
         private int channelMode = -1;
 
-        private int countFrames (byte[] data)
-        {
-            int count = 0, start = 2, b1, b2, b3;//, b4;
-            boolean skipped = false;
-
-            while (start + 2 < data.length)
-            {
-                b1 = data[start] & 0xff;
-                b2 = data[start + 1] & 0xff;
-                b3 = data[start + 2] & 0xff;
-
-                // check frame sync
-                if (b1 != 255 || (b2 >> 5 & 0x7) != 7)
-                {
-                    if (!skipped && start > 0)  // LAME has a bug where they do padding wrong sometimes
-                    {
-                        b3 = b2;
-                        b2 = b1;
-                        b1 = data[start-1] & 0xff;
-                        if (b1 != 255 || (b2 >> 5 & 0x7) != 7)
-                        {
-                            ++start;
-                            continue;
-                        }
-                        else
-                        {
-                            --start;
-                        }
-                    }
-                    else
-                    {
-                        ++start;
-                        continue;
-                    }
-                }
-
-                /**
-                 * 0 - version 2.5
-                 * 1 - reserved
-                 * 2 - version 2
-                 * 3 - version 1
-                 */
-                int version = b2 >> 3 & 0x3;
-
-                /**
-                 * 0 - reserved
-                 * 1 - layer III => 1152 samples
-                 * 2 - layer II  => 1152 samples
-                 * 3 - layer I   => 384  samples
-                 */
-                int layer = b2 >> 1 & 0x3;
-
-                int bits = b3 >> 4 & 0xf;
-                int bitrateIndex = mp3bitrateIndices[version][layer];
-                int bitrate = bitrateIndex != -1 ? mp3bitrates[bits][bitrateIndex] * 1000 : -1;
-
-                if (bitrate == -1)
-                {
-                    skipped = true;
-                    ++start;
-                    continue;
-                }
-
-                int samplingRate = b3 >> 2 & 0x3;
-
-                int frequency = mp3frequencies[samplingRate][version];
-
-                if (frequency == 0)
-                {
-                    skipped = true;
-                    ++start;
-                    continue;
-    //                return -1;
-                }
-
-                int padding = b3 >> 1 & 0x1;
-
-                int frameLength = layer == 3 ?
-                        (12 * bitrate / frequency + padding) * 4 :
-                        144 * bitrate / frequency + padding;
-
-                if (frameLength == 0)
-                {
-                    // just in case. if we don't check frameLength, we may end up running an infinite loop!
-                    break;
-                }
-                else
-                {
-                    start += frameLength;
-                }
-
-                skipped = false;
-                count += 1;
-            }
-
-            return count;
-        }
+        private int numFrames = 0;
+        private int frameLength;
 
         private void processInfoTag () throws IOException, NotInMP3Format {
             in.mark(40);
@@ -317,17 +222,23 @@ public class SoundTranscoder extends AbstractTranscoder
             }
         }
 
-        private void processRemainingFrames () throws IOException {
-            int b;
-            while ((b = in.read()) != -1)
-            {
-                soundDataStream.write(b);
+        private void processRemainingFrames () throws IOException, NotInMP3Format {
+            while (readNextFrameHeader()) {
+                int b, c=0;
+                while (c < frameLength && (b = in.read()) != -1) {
+                    soundDataStream.write(b);
+                    ++c;
+                }
+                if (c == frameLength) {
+                    ++numFrames;
+                }
             }
         }
 
         private boolean readNextFrameHeader () throws IOException, NotInMP3Format {
             // look for the first 11-bit frame sync. skip everything before the frame sync
             int b, state = 0;
+            int bits = 0, padding = 0;
 
             in.mark(4);
             while ((b = in.read()) != -1)
@@ -366,6 +277,8 @@ public class SoundTranscoder extends AbstractTranscoder
                     } else if (samplingRate != (b >> 2 & 0x3)) {
                         throw new NotInMP3Format(); // TODO choose a better exception
                     }
+                    padding = b >> 1 & 0x1;
+                    bits = b >> 4 & 0xf;
                     state = 3;
                 } else if (state == 3) {
                     if (channelMode == -1) {
@@ -375,8 +288,24 @@ public class SoundTranscoder extends AbstractTranscoder
                     }
 
                     in.reset();
+
+                    int bitrateIndex = mp3bitrateIndices[version][layer];
+                    int bitrate = bitrateIndex != -1 ? mp3bitrates[bits][bitrateIndex] * 1000 : -1;
+
+                    int frequency = mp3frequencies[samplingRate][version];
+
+                    if (bitrate <= 0 || frequency == 0)
+                    {
+                        state = 0;
+                        continue;
+                    }
+
+                    frameLength = layer == 3 ?
+                            (12 * bitrate / frequency + padding) * 4 :
+                            144 * bitrate / frequency + padding;
+
                     return true;
-               }
+                }
             }
 
             return false;
@@ -398,8 +327,6 @@ public class SoundTranscoder extends AbstractTranscoder
 
                 if (readNextFrameHeader()) {
                     processInfoTag();
-
-                    readNextFrameHeader();
                     processRemainingFrames();
                 } else {
                     throw new NotInMP3Format();
@@ -468,7 +395,7 @@ public class SoundTranscoder extends AbstractTranscoder
              *
              * sample count = number of MP3 frames * number of samples per MP3
              */
-            ds.sampleCount = countFrames(ds.data) * (layer == 3 ? 384 : 1152) - fill - encoderDelay;
+            ds.sampleCount = numFrames * (layer == 3 ? 384 : 1152) - fill - encoderDelay;
 
             if (ds.sampleCount < 0)
             {
