@@ -35,50 +35,49 @@ public class MP3Frame {
     public static final int MPEG_LAYER_1 = 3;
 
     private static final int[][] FREQUENCIES;
-	private static final int[][] BITRATES;
+    private static final int[][] BITRATES;
     private static final int[][] BITRATE_VERSION_INDICES;
 
-    static
-	{
-		// [frequency_index][version_index]
-		FREQUENCIES = new int[][]
-		{
-			{11025, 0, 22050, 44100},
-			{12000, 0, 24000, 48000},
-			{8000, 0, 16000, 32000},
-			{0, 0, 0, 0}
-		};
+    static {
+        // [frequency_index][version_index]
+        FREQUENCIES = new int[][]
+                {
+                        {11025, 0, 22050, 44100},
+                        {12000, 0, 24000, 48000},
+                        {8000, 0, 16000, 32000},
+                        {0, 0, 0, 0}
+                };
 
-		// [bits][version,layer]
-		BITRATES = new int[][]
-		{
-			{0, 0, 0, 0, 0},
-			{32000, 32000, 32000, 32000, 8000},
-			{64000, 48000, 40000, 48000, 16000},
-			{96000, 56000, 48000, 56000, 24000},
-			{128000, 64000, 56000, 64000, 32000},
-			{160000, 80000, 64000, 80000, 40000},
-			{192000, 96000, 80000, 96000, 48000},
-			{224000, 112000, 96000, 112000, 56000},
-			{256000, 128000, 112000, 128000, 64000},
-			{288000, 160000, 128000, 144000, 80000},
-			{320000, 192000, 160000, 160000, 96000},
-			{352000, 224000, 192000, 176000, 112000},
-			{384000, 256000, 224000, 192000, 128000},
-			{416000, 320000, 256000, 224000, 144000},
-			{448000, 384000, 320000, 256000, 160000},
-			{-1, -1, -1, -1, -1}
-		};
+        // [bits][version,layer]
+        BITRATES = new int[][]
+                {
+                        {0, 0, 0, 0, 0},
+                        {32000, 32000, 32000, 32000, 8000},
+                        {64000, 48000, 40000, 48000, 16000},
+                        {96000, 56000, 48000, 56000, 24000},
+                        {128000, 64000, 56000, 64000, 32000},
+                        {160000, 80000, 64000, 80000, 40000},
+                        {192000, 96000, 80000, 96000, 48000},
+                        {224000, 112000, 96000, 112000, 56000},
+                        {256000, 128000, 112000, 128000, 64000},
+                        {288000, 160000, 128000, 144000, 80000},
+                        {320000, 192000, 160000, 160000, 96000},
+                        {352000, 224000, 192000, 176000, 112000},
+                        {384000, 256000, 224000, 192000, 128000},
+                        {416000, 320000, 256000, 224000, 144000},
+                        {448000, 384000, 320000, 256000, 160000},
+                        {-1, -1, -1, -1, -1}
+                };
 
-		BITRATE_VERSION_INDICES = new int[][]
-		{
-			// reserved, layer III, layer II, layer I
-			{-1, 4, 4, 3}, // MPEG version 2.5
-			{-1, -1, -1, -1}, // reserved
-			{-1, 4, 4, 3}, // MPEG version 2
-			{-1, 2, 1, 0}  // MPEG version 1
-		};
-	}
+        BITRATE_VERSION_INDICES = new int[][]
+                {
+                        // reserved, layer III, layer II, layer I
+                        {-1, 4, 4, 3}, // MPEG version 2.5
+                        {-1, -1, -1, -1}, // reserved
+                        {-1, 4, 4, 3}, // MPEG version 2
+                        {-1, 2, 1, 0}  // MPEG version 1
+                };
+    }
 
     private int mpegVersion;
     private int layer;
@@ -161,14 +160,14 @@ public class MP3Frame {
 
         frame.frameData = new byte[byteLength];
 
-        frame.frameData[0] = (byte)0xff;
-        frame.frameData[1] = (byte)b1;
-        frame.frameData[2] = (byte)b2;
-        frame.frameData[3] = (byte)b3;
+        frame.frameData[0] = (byte) 0xff;
+        frame.frameData[1] = (byte) b1;
+        frame.frameData[2] = (byte) b2;
+        frame.frameData[3] = (byte) b3;
 
         pos = 4;
         while (pos < byteLength) {
-            int bytesRead = in.read(frame.frameData, pos, byteLength-pos);
+            int bytesRead = in.read(frame.frameData, pos, byteLength - pos);
             if (bytesRead == -1) {
                 // LAME < 3.80 truncates the last frame instead of properly padding it
                 // with ancillary data. Our frameData is already padded with zeroes,
